@@ -17,16 +17,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         "👋 Добро пожаловать в LTC бот!\n"
         "Здесь вы можете пополнить баланс с помощью Litecoin.\n"
+        "📌 Каждому пользователю присваивается *постоянный LTC-адрес* для пополнения.\n"
         "Используйте кнопки ниже для управления вашим аккаунтом."
     )
     keyboard = main_menu_keyboard()
-    await update.message.reply_text(welcome_text, reply_markup=keyboard)
+    await update.message.reply_text(welcome_text, reply_markup=keyboard, parse_mode='Markdown')
 
 def main_menu_keyboard():
     """Клавиатура главного меню"""
     keyboard = [
         [InlineKeyboardButton("💰 Мой баланс", callback_data='balance')],
-        [InlineKeyboardButton("📥 Пополнить баланс", callback_data='deposit')],
+        [InlineKeyboardButton("📥 Мой LTC-адрес", callback_data='deposit')],
         [InlineKeyboardButton("📊 Последние транзакции", callback_data='transactions')]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -47,9 +48,6 @@ async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif data.startswith('check_tx:'):
         txid = data.split(':')[1]
         await check_transaction_status(query, txid)
-    elif data.startswith('delete_tx:'):
-        txid = data.split(':')[1]
-        await delete_transaction(query, txid)
     elif data == 'back_to_main':
         await query.edit_message_text(
             text="Главное меню:",
@@ -63,41 +61,37 @@ async def show_balance(query, user_id):
     await query.edit_message_text(text=text, reply_markup=main_menu_keyboard())
 
 async def show_deposit_address(query, user_id):
-    """Показать адрес для пополнения"""
-    # Пытаемся получить существующий адрес
-    address = await db.db.get_ltc_address(user_id)
-    
-    if not address:
-        # Генерируем новый адрес
-        address = await ltc.ltc_api.create_ltc_address()
-        if address:
-            await db.db.save_ltc_address(user_id, address)
-        else:
-            await query.edit_message_text(
-                text="❌ Ошибка при создании адреса. Попробуйте позже.",
-                reply_markup=main_menu_keyboard()
-            )
-            return
-
-    text = f"""
+    """Показывает единственный LTC-адрес для пополнения"""
+    try:
+        # Получаем или создаем адрес
+        address = await db.db.get_or_create_ltc_address(user_id)
+        
+        text = f"""
 📥 Для пополнения баланса отправьте LTC на следующий адрес:
 `{address}`
 
 💡 После отправки средств используйте кнопку «Проверить транзакцию» для обновления баланса.
-    """
-    
-    # Создаем клавиатуру с кнопками для управления транзакциями
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 Проверить транзакции", callback_data=f'check_address:{address}')],
-        [InlineKeyboardButton("🗑️ Очистить историю", callback_data='clear_history')],
-        [InlineKeyboardButton("🔙 Назад", callback_data='back_to_main')]
-    ])
-    
-    await query.edit_message_text(
-        text=text, 
-        reply_markup=keyboard, 
-        parse_mode='Markdown'
-    )
+
+⚠️ *Это ваш постоянный адрес для пополнения. Используйте его для всех депозитов.*
+        """
+        
+        # Создаем клавиатуру с кнопками для этого адреса
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Проверить транзакции", callback_data=f'check_tx:{address}')],
+            [InlineKeyboardButton("🔙 Назад", callback_data='back_to_main')]
+        ])
+        
+        await query.edit_message_text(
+            text=text, 
+            reply_markup=keyboard, 
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        print(f"Error showing deposit address: {e}")
+        await query.edit_message_text(
+            text="❌ Ошибка при получении адреса. Попробуйте позже.",
+            reply_markup=main_menu_keyboard()
+        )
 
 async def check_transaction_status(query, txid):
     """Проверка статуса транзакции"""
@@ -119,12 +113,6 @@ async def check_transaction_status(query, txid):
     
     await query.edit_message_text(text=text, reply_markup=main_menu_keyboard())
 
-async def delete_transaction(query, txid):
-    """Удаление информации о транзакции"""
-    await db.db.delete_transaction(txid)
-    text = "Информация о транзакции удалена."
-    await query.edit_message_text(text=text, reply_markup=main_menu_keyboard())
-
 async def show_transactions(query, user_id):
     """Показать последние транзакции пользователя"""
     transactions = await db.db.get_user_transactions(user_id, limit=5)
@@ -144,44 +132,6 @@ async def show_transactions(query, user_id):
     ])
     
     await query.edit_message_text(text=text, reply_markup=keyboard)
-
-async def check_address_transactions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверка транзакций по адресу (фоновная задача)"""
-    # Эта функция может запускаться по расписанию для проверки новых транзакций
-    user_id = update.effective_user.id
-    address = await db.db.get_ltc_address(user_id)
-    
-    if address:
-        # Проверяем неподтвержденные транзакции
-        unconfirmed_txs = await ltc.ltc_api.get_unconfirmed_transactions(address)
-        
-        if unconfirmed_txs and 'data' in unconfirmed_txs:
-            for tx in unconfirmed_txs['data']:
-                # Сохраняем информацию о транзакции
-                await db.db.add_transaction(
-                    txid=tx['hash'],
-                    user_id=user_id,
-                    amount=tx['amount'],
-                    address=address,
-                    status='pending'
-                )
-        
-        # Проверяем подтвержденные транзакции
-        confirmed_txs = await ltc.ltc_api.get_address_transactions(address)
-        if confirmed_txs and 'data' in confirmed_txs:
-            for tx in confirmed_txs['data']:
-                # Обновляем статус транзакции
-                await db.db.add_transaction(
-                    txid=tx['hash'],
-                    user_id=user_id,
-                    amount=tx['amount'],
-                    address=address,
-                    status='confirmed'
-                )
-                
-                # Если транзакция подтверждена, обновляем баланс
-                if tx.get('confirmations', 0) > 0:
-                    await db.db.update_user_balance(user_id, tx['amount'])
 
 def main():
     # Инициализация приложения бота
