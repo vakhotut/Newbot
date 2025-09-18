@@ -3,8 +3,10 @@ import aiohttp
 import asyncio
 from typing import Optional, Tuple, Dict, Any
 from config import config
-from hdwallet import get_address_from_path
-import db
+import logging
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
 
 class LTCBitAPSAPI:
     def __init__(self):
@@ -46,19 +48,21 @@ class LTCBitAPSAPI:
                     await asyncio.sleep(self.rate_limit_reset)
                     return await self.make_request(endpoint, params)
                 else:
-                    print(f"API Error: {response.status} - {await response.text()}")
+                    logger.error(f"API Error: {response.status} - {await response.text()}")
                     return None
         except Exception as e:
-            print(f"Request failed: {e}")
+            logger.error(f"Request failed: {e}")
             return None
 
     async def get_address_state(self, address: str) -> Optional[dict]:
         """Получение состояния адреса"""
+        logger.info(f"Getting address state for: {address}")
         endpoint = f"/address/state/{address}"
         return await self.make_request(endpoint)
 
     async def get_address_transactions(self, address: str, limit: int = 10, page: int = 1) -> Optional[dict]:
         """Получение транзакций адреса"""
+        logger.info(f"Getting transactions for address: {address}")
         endpoint = f"/address/transactions/{address}"
         params = {
             'limit': limit,
@@ -69,37 +73,26 @@ class LTCBitAPSAPI:
 
     async def get_unconfirmed_transactions(self, address: str) -> Optional[dict]:
         """Получение неподтвержденных транзакций адреса"""
+        logger.info(f"Getting unconfirmed transactions for address: {address}")
         endpoint = f"/address/unconfirmed/transactions/{address}"
         return await self.make_request(endpoint)
 
     async def get_transaction(self, tx_hash: str) -> Optional[dict]:
         """Получение информации о транзакции"""
+        logger.info(f"Getting transaction: {tx_hash}")
         endpoint = f"/transaction/{tx_hash}"
         return await self.make_request(endpoint)
 
-    async def create_ltc_address(self, user_id: int) -> Optional[str]:
-        """
-        Создание нового LTC-адреса с использованием HD-кошелька
-        Для каждого пользователя генерируется уникальный адрес на основе его ID
-        """
-        try:
-            # Используем ID пользователя для генерации уникального пути
-            # Формат: m/84'/2'/0'/0/{user_id % 1000000}
-            # Ограничиваем user_id модулем 1000000 чтобы избежать слишком больших чисел
-            derivation_path = f"m/84'/2'/0'/0/{user_id % 1000000}"
-            address = get_address_from_path(derivation_path)
-            return address
-        except Exception as e:
-            print(f"Error generating LTC address: {e}")
-            return None
-
     async def check_transaction_status(self, tx_hash: str) -> Tuple[str, int]:
         """Проверка статуса транзакции"""
+        logger.info(f"Checking transaction status: {tx_hash}")
         data = await self.get_transaction(tx_hash)
         if data and 'data' in data:
             confirmations = data['data'].get('confirmations', 0)
             status = 'confirmed' if confirmations > 0 else 'pending'
+            logger.info(f"Transaction {tx_hash} status: {status}, confirmations: {confirmations}")
             return status, confirmations
+        logger.warning(f"Transaction {tx_hash} not found or error")
         return 'error', 0
 
 # Глобальный экземпляр API
