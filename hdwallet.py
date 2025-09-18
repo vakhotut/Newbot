@@ -1,4 +1,3 @@
-
 import hashlib
 import hmac
 import os
@@ -7,6 +6,10 @@ from typing import Tuple, List, Optional
 import base58
 import ecdsa
 from mnemonic import Mnemonic
+import logging
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
 
 class HDWallet:
     def __init__(self, mnemonic: str = None, passphrase: str = ""):
@@ -16,10 +19,12 @@ class HDWallet:
         """
         if mnemonic is None:
             self.mnemonic = self.generate_mnemonic()
+            logger.info("Generated new mnemonic phrase")
         else:
             if not self.validate_mnemonic(mnemonic):
                 raise ValueError("Invalid mnemonic phrase")
             self.mnemonic = mnemonic
+            logger.info("Initialized with existing mnemonic phrase")
         self.passphrase = passphrase
         self.seed = self.mnemonic_to_seed(self.mnemonic, self.passphrase)
         
@@ -199,9 +204,11 @@ class HDWallet:
 try:
     from config import config
     hd_wallet = HDWallet(config.BOT_MNEMONIC if hasattr(config, 'BOT_MNEMONIC') else None)
-except:
+    logger.info("HDWallet initialized with config mnemonic")
+except Exception as e:
     # Fallback для случаев, когда конфиг не доступен
     hd_wallet = HDWallet()
+    logger.warning(f"Config not available, generated new mnemonic: {e}")
 
 # Функции для использования в других модулях
 def generate_mnemonic() -> str:
@@ -209,6 +216,20 @@ def generate_mnemonic() -> str:
 
 def get_address_from_path(path: str = "m/84'/2'/0'/0/0") -> str:
     return hd_wallet.get_address(path)
+
+def create_ltc_address_for_user(user_id: int) -> str:
+    """Создание LTC-адреса для конкретного пользователя"""
+    try:
+        # Используем ID пользователя для генерации уникального пути
+        # Формат: m/84'/2'/0'/0/{user_id % 1000000}
+        # Ограничиваем user_id модулем 1000000 чтобы избежать слишком больших чисел
+        derivation_path = f"m/84'/2'/0'/0/{user_id % 1000000}"
+        address = get_address_from_path(derivation_path)
+        logger.info(f"Generated LTC address for user {user_id}: {address}")
+        return address
+    except Exception as e:
+        logger.error(f"Error generating LTC address for user {user_id}: {e}")
+        return None
 
 def get_private_key_from_path(path: str = "m/84'/2'/0'/0/0") -> str:
     return hd_wallet.get_private_key_wif(path)
