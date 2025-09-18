@@ -1,3 +1,4 @@
+# db.py
 import asyncpg
 import asyncio
 from contextlib import asynccontextmanager
@@ -122,8 +123,8 @@ class Database:
             if address:
                 return address
             
-            # Если адреса нет, создаем новый
-            new_address = await ltc.ltc_api.create_ltc_address()
+            # Если адреса нет, создаем новый через HD-кошелек
+            new_address = await ltc.ltc_api.create_ltc_address(user_id)
             if new_address:
                 await self.save_ltc_address(user_id, new_address)
                 return new_address
