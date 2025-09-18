@@ -17,7 +17,7 @@ class HDWallet:
         Инициализация HD кошелька с мнемоникой и парольной фразой
         Если мнемоника не предоставлена, генерируется новая
         """
-        if mnemonic is None:
+        if mnemonic is None or mnemonic.strip() == "":
             self.mnemonic = self.generate_mnemonic()
             logger.info("Generated new mnemonic phrase")
         else:
@@ -203,8 +203,13 @@ class HDWallet:
 # Мнемоника должна храниться в безопасном месте (env переменные/конфиг)
 try:
     from config import config
-    hd_wallet = HDWallet(config.BOT_MNEMONIC if hasattr(config, 'BOT_MNEMONIC') else None)
-    logger.info("HDWallet initialized with config mnemonic")
+    # Проверяем, есть ли мнемоника в конфиге и она не пустая
+    mnemonic = config.BOT_MNEMONIC if hasattr(config, 'BOT_MNEMONIC') and config.BOT_MNEMONIC.strip() != '' else None
+    hd_wallet = HDWallet(mnemonic)
+    if mnemonic:
+        logger.info("HDWallet initialized with config mnemonic")
+    else:
+        logger.info("HDWallet generated new mnemonic")
 except Exception as e:
     # Fallback для случаев, когда конфиг не доступен
     hd_wallet = HDWallet()
