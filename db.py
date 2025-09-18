@@ -74,6 +74,15 @@ class Database:
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status)')
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_ltc_addresses_user_id ON ltc_addresses(user_id)')
 
+    async def create_user_if_not_exists(self, user_id: int) -> None:
+        """Создает пользователя, если его еще нет"""
+        async with self.get_connection() as conn:
+            await conn.execute('''
+                INSERT INTO users (user_id, balance)
+                VALUES ($1, 0)
+                ON CONFLICT (user_id) DO NOTHING
+            ''', user_id)
+
     async def get_user_balance(self, user_id: int) -> int:
         """Получение баланса пользователя"""
         async with self.get_connection() as conn:
@@ -87,18 +96,20 @@ class Database:
         """Обновление баланса пользователя"""
         async with self.get_connection() as conn:
             # Добавляем пользователя, если его нет
+            await self.create_user_if_not_exists(user_id)
+            
             await conn.execute('''
-                INSERT INTO users (user_id, balance)
-                VALUES ($1, $2)
-                ON CONFLICT (user_id)
-                DO UPDATE SET 
-                    balance = users.balance + EXCLUDED.balance,
-                    updated_at = NOW()
+                UPDATE users 
+                SET balance = balance + $2, updated_at = NOW()
+                WHERE user_id = $1
             ''', user_id, amount)
 
     async def save_ltc_address(self, user_id: int, address: str) -> None:
         """Сохранение LTC-адреса пользователя"""
         async with self.get_connection() as conn:
+            # Сначала убедимся, что пользователь существует
+            await self.create_user_if_not_exists(user_id)
+            
             await conn.execute('''
                 INSERT INTO ltc_addresses (user_id, address)
                 VALUES ($1, $2)
@@ -143,6 +154,9 @@ class Database:
     async def add_transaction(self, txid: str, user_id: int, amount: int, address: str, status: str = 'pending') -> None:
         """Добавление информации о транзакции"""
         async with self.get_connection() as conn:
+            # Сначала убедимся, что пользователь существует
+            await self.create_user_if_not_exists(user_id)
+            
             await conn.execute('''
                 INSERT INTO transactions (txid, user_id, amount, address, status)
                 VALUES ($1, $2, $3, $4, $5)
