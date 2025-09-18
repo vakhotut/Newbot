@@ -4,7 +4,11 @@ import asyncio
 from contextlib import asynccontextmanager
 from config import config
 from typing import Optional, List, Dict, Any
-import ltc
+import logging
+from hdwallet import create_ltc_address_for_user
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
 
 class Database:
     def __init__(self):
@@ -121,15 +125,20 @@ class Database:
             )
             
             if address:
+                logger.info(f"Found existing LTC address for user {user_id}: {address}")
                 return address
             
             # Если адреса нет, создаем новый через HD-кошелек
-            new_address = await ltc.ltc_api.create_ltc_address(user_id)
+            logger.info(f"Creating new LTC address for user {user_id}")
+            new_address = create_ltc_address_for_user(user_id)
             if new_address:
                 await self.save_ltc_address(user_id, new_address)
+                logger.info(f"Successfully created LTC address for user {user_id}: {new_address}")
                 return new_address
             else:
-                raise Exception("Не удалось создать LTC-адрес")
+                error_msg = "Не удалось создать LTC-адрес"
+                logger.error(error_msg)
+                raise Exception(error_msg)
 
     async def add_transaction(self, txid: str, user_id: int, amount: int, address: str, status: str = 'pending') -> None:
         """Добавление информации о транзакции"""
