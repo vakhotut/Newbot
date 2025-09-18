@@ -1,6 +1,7 @@
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.error import BadRequest
 from config import config
 import db
 import ltc
@@ -30,16 +31,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Используйте кнопки ниже для управления вашим аккаунтом."
     )
     keyboard = main_menu_keyboard()
+    
+    # Создаем пользователя в базе если его нет
+    try:
+        await db.db.create_user_if_not_exists(user_id)
+    except Exception as e:
+        logger.error(f"Error creating user {user_id}: {e}")
+    
     if update.message:
         await update.message.reply_text(welcome_text, reply_markup=keyboard, parse_mode='Markdown')
     else:
-        await update.callback_query.edit_message_text(welcome_text, reply_markup=keyboard, parse_mode='Markdown')
+        try:
+            await update.callback_query.edit_message_text(welcome_text, reply_markup=keyboard, parse_mode='Markdown')
+        except BadRequest as e:
+            if "Message is not modified" in str(e):
+                # Игнорируем ошибку, если сообщение не изменилось
+                pass
+            else:
+                raise
 
 async def address_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /address"""
     user_id = update.effective_user.id
     logger.info(f"User {user_id} requested address")
     try:
+        # Убедимся, что пользователь существует
+        await db.db.create_user_if_not_exists(user_id)
         address = await db.db.get_or_create_ltc_address(user_id)
         text = f"""
 📋 Ваш постоянный LTC-адрес:
@@ -56,9 +73,15 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /balance"""
     user_id = update.effective_user.id
     logger.info(f"User {user_id} requested balance")
-    balance = await db.db.get_user_balance(user_id)
-    text = f"💼 Ваш текущий баланс: {balance / 100000000:.8f} LTC"
-    await update.message.reply_text(text)
+    try:
+        # Убедимся, что пользователь существует
+        await db.db.create_user_if_not_exists(user_id)
+        balance = await db.db.get_user_balance(user_id)
+        text = f"💼 Ваш текущий баланс: {balance / 100000000:.8f} LTC"
+        await update.message.reply_text(text)
+    except Exception as e:
+        logger.error(f"Error getting balance for user {user_id}: {e}")
+        await update.message.reply_text("❌ Ошибка при получении баланса. Попробуйте позже.")
 
 def main_menu_keyboard():
     """Клавиатура главного меню"""
@@ -77,6 +100,17 @@ async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = query.from_user.id
     data = query.data
     logger.info(f"User {user_id} pressed button: {data}")
+
+    # Убедимся, что пользователь существует
+    try:
+        await db.db.create_user_if_not_exists(user_id)
+    except Exception as e:
+        logger.error(f"Error creating user {user_id}: {e}")
+        await query.edit_message_text(
+            text="❌ Ошибка при инициализации пользователя. Попробуйте позже.",
+            reply_markup=main_menu_keyboard()
+        )
+        return
 
     if data == 'balance':
         await show_balance(query, user_id)
@@ -97,9 +131,16 @@ async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def show_balance(query, user_id):
     """Показать баланс пользователя"""
-    balance = await db.db.get_user_balance(user_id)
-    text = f"💼 Ваш текущий баланс: {balance / 100000000:.8f} LTC"
-    await query.edit_message_text(text=text, reply_markup=main_menu_keyboard())
+    try:
+        balance = await db.db.get_user_balance(user_id)
+        text = f"💼 Ваш текущий баланс: {balance / 100000000:.8f} LTC"
+        await query.edit_message_text(text=text, reply_markup=main_menu_keyboard())
+    except Exception as e:
+        logger.error(f"Error showing balance for user {user_id}: {e}")
+        await query.edit_message_text(
+            text="❌ Ошибка при получении баланса. Попробуйте позже.",
+            reply_markup=main_menu_keyboard()
+        )
 
 async def show_deposit_address(query, user_id):
     """Показывает единственный LTC-адрес для пополнения"""
@@ -186,23 +227,30 @@ async def check_transaction_status(query, address):
 
 async def show_transactions(query, user_id):
     """Показать последние транзакции пользователя"""
-    transactions = await db.db.get_user_transactions(user_id, limit=5)
-    
-    if not transactions:
-        text = "📝 У вас еще нет транзакций."
-    else:
-        text = "📊 Последние транзакции:\n\n"
-        for tx in transactions:
-            status_icon = "✅" if tx['status'] == 'confirmed' else "⏳"
-            text += f"{status_icon} {tx['amount'] / 100000000:.8f} LTC - {tx['status']}\n"
-            text += f"TXID: {tx['txid'][:10]}...\n\n"
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 Обновить", callback_data='transactions')],
-        [InlineKeyboardButton("🔙 Назад", callback_data='back_to_main')]
-    ])
-    
-    await query.edit_message_text(text=text, reply_markup=keyboard)
+    try:
+        transactions = await db.db.get_user_transactions(user_id, limit=5)
+        
+        if not transactions:
+            text = "📝 У вас еще нет транзакций."
+        else:
+            text = "📊 Последние транзакции:\n\n"
+            for tx in transactions:
+                status_icon = "✅" if tx['status'] == 'confirmed' else "⏳"
+                text += f"{status_icon} {tx['amount'] / 100000000:.8f} LTC - {tx['status']}\n"
+                text += f"TXID: {tx['txid'][:10]}...\n\n"
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Обновить", callback_data='transactions')],
+            [InlineKeyboardButton("🔙 Назад", callback_data='back_to_main')]
+        ])
+        
+        await query.edit_message_text(text=text, reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"Error showing transactions for user {user_id}: {e}")
+        await query.edit_message_text(
+            text="❌ Ошибка при получении транзакций. Попробуйте позже.",
+            reply_markup=main_menu_keyboard()
+        )
 
 async def check_address_transactions_job(context: ContextTypes.DEFAULT_TYPE):
     """Фоновая задача для проверки транзакций по адресам"""
@@ -210,7 +258,7 @@ async def check_address_transactions_job(context: ContextTypes.DEFAULT_TYPE):
     # Здесь можно реализовать периодическую проверку транзакций
     # для всех пользователей в базе данных
 
-def main():
+async def main():
     # Инициализация приложения бота
     application = Application.builder().token(config.BOT_TOKEN).build()
     
@@ -221,12 +269,11 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_button_press))
     
     # Инициализация базы данных перед запуском
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(init_database())
+    await init_database()
     
     # Запуск бота
     logger.info("Бот запущен...")
-    application.run_polling()
+    await application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
