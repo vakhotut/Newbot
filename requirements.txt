@@ -1,3 +1,6 @@
-python-telegram-bot 
-asyncpg
-aiohttp
+python-telegram-bot
+asyncpg==
+aiohttp==
+ecdsa==
+base58==
+python-dotenv
