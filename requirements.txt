@@ -1,9 +1,3 @@
-aiogram==2.25.1
-aiohttp==3.8.5
-asyncpg==0.28.0
-blockcypher==1.0.39
-qrcode==7.4.2
-python-dotenv==1.0.0
-hdwallet==1.1.1
-aioschedule==0.4.0
-psutil==5.9.5
+fastapi
+uvicorn
+requests
