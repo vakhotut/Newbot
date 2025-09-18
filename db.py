@@ -3,6 +3,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from config import config
 from typing import Optional, List, Dict, Any
+import ltc
 
 class Database:
     def __init__(self):
@@ -101,13 +102,33 @@ class Database:
             ''', user_id, address)
 
     async def get_ltc_address(self, user_id: int) -> Optional[str]:
-        """Получение последнего LTC-адреса пользователя"""
+        """Получение LTC-адреса пользователя"""
         async with self.get_connection() as conn:
             row = await conn.fetchrow(
                 'SELECT address FROM ltc_addresses WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
                 user_id
             )
             return row['address'] if row else None
+
+    async def get_or_create_ltc_address(self, user_id: int) -> str:
+        """Получает существующий LTC-адрес пользователя или создает новый"""
+        async with self.get_connection() as conn:
+            # Пытаемся получить существующий адрес
+            address = await conn.fetchval(
+                'SELECT address FROM ltc_addresses WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
+                user_id
+            )
+            
+            if address:
+                return address
+            
+            # Если адреса нет, создаем новый
+            new_address = await ltc.ltc_api.create_ltc_address()
+            if new_address:
+                await self.save_ltc_address(user_id, new_address)
+                return new_address
+            else:
+                raise Exception("Не удалось создать LTC-адрес")
 
     async def add_transaction(self, txid: str, user_id: int, amount: int, address: str, status: str = 'pending') -> None:
         """Добавление информации о транзакции"""
